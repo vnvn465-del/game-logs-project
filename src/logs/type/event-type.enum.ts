@@ -1,0 +1,15 @@
+export enum EventType {
+  SESSION_LOGIN = 'session_login',
+  SESSION_LOGOUT = 'session_logout',
+  LEVEL_UP = 'level_up',
+  EXP_GAIN = 'exp_gain',
+  MONSTER_KILL = 'monster_kill',
+  QUEST_COMPLETE = 'quest_complete',
+  ITEM_ACQUIRE = 'item_acquire',
+  ITEM_USE = 'item_use',
+  CURRENCY_CHANGE = 'currency_change',
+  SHOP_PURCHASE = 'shop_purchase',
+  BOSS_CLEAR = 'boss_clear',
+  MAP_ENTER = 'map_enter',
+  DEATH = 'death',
+}

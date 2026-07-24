@@ -1,17 +1,17 @@
 /* eslint-disable prettier/prettier */
 import { Entity, PrimaryColumn, Column, CreateDateColumn } from 'typeorm';
+import { EventType } from './logs/type/event-type.enum';
 
 @Entity('game_logs')
 export class GameLog {
-  
-  @PrimaryColumn('uuid') 
+  @PrimaryColumn('uuid')
   event_id!: string;
 
   @Column({ type: 'varchar', length: 255 })
   instance_id!: string;
 
   @Column({ type: 'varchar', length: 50 })
-  event_type!: string;
+  event_type!: EventType;
 
   @Column({ type: 'int' })
   user_id!: number;
