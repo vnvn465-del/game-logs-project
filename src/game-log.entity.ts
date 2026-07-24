@@ -5,7 +5,7 @@ import { Entity, PrimaryColumn, Column, CreateDateColumn } from 'typeorm';
 export class GameLog {
   
   @PrimaryColumn('uuid') 
-  event_id!: string; // 👈 느낌표 추가됨!
+  event_id!: string;
 
   @Column({ type: 'varchar', length: 255 })
   instance_id!: string;
