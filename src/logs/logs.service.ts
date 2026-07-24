@@ -3,6 +3,7 @@ import { Injectable } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { GameLog } from '../game-log.entity';
+import { EventType } from './type/event-type.enum';
 
 // 로그 적재 코드
 @Injectable()
@@ -36,7 +37,7 @@ export class LogsService {
       .createQueryBuilder('log')
       .select('DATE(log.occurred_at)', 'date')
       .addSelect('COUNT(DISTINCT log.user_id)', 'dau')
-      .where('log.event_type = :type', { type: 'session_login' })
+      .where('log.event_type = :type', { type: EventType.SESSION_LOGIN })
       .andWhere('log.occurred_at >= :start AND log.occurred_at <= :end', {
         start: startDate,
         end: endDate,
@@ -54,7 +55,7 @@ export class LogsService {
       .createQueryBuilder('log')
       .select("SUM(CAST(log.payload->>'amount' AS INTEGER))", 'total_revenue')
       .addSelect('COUNT(DISTINCT log.user_id)', 'paying_users')
-      .where('log.event_type = :type', { type: 'shop_purchase' })
+      .where('log.event_type = :type', { type: EventType.SHOP_PURCHASE })
       .andWhere('log.occurred_at >= :start AND log.occurred_at <= :end', {
         start: startDate,
         end: endDate,
@@ -82,7 +83,7 @@ export class LogsService {
     const dauResult = await this.gameLogRepo
       .createQueryBuilder('log')
       .select('COUNT(DISTINCT log.user_id)', 'total_users')
-      .where('log.event_type = :type', { type: 'session_login' })
+      .where('log.event_type = :type', { type: EventType.SESSION_LOGIN })
       .andWhere('log.occurred_at >= :start AND log.occurred_at <= :end', {
         start: startDate,
         end: endDate,
@@ -93,7 +94,7 @@ export class LogsService {
     const puResult = await this.gameLogRepo
       .createQueryBuilder('log')
       .select('COUNT(DISTINCT log.user_id)', 'paying_users')
-      .where('log.event_type = :type', { type: 'shop_purchase' })
+      .where('log.event_type = :type', { type: EventType.SHOP_PURCHASE })
       .andWhere('log.occurred_at >= :start AND log.occurred_at <= :end', {
         start: startDate,
         end: endDate,
@@ -130,7 +131,7 @@ export class LogsService {
       WITH FirstLogin AS (
         SELECT user_id, DATE(MIN(occurred_at)) as first_date
         FROM game_logs
-        WHERE event_type = 'session_login'
+        WHERE event_type = $1
         GROUP BY user_id
       )
       SELECT 
@@ -143,13 +144,15 @@ export class LogsService {
         ROUND(COUNT(DISTINCT CASE WHEN DATE(l.occurred_at) = f.first_date + INTERVAL '1 day' THEN l.user_id END) * 100.0 / COUNT(DISTINCT f.user_id), 2) as "D1_리텐션(%)",
         ROUND(COUNT(DISTINCT CASE WHEN DATE(l.occurred_at) = f.first_date + INTERVAL '7 day' THEN l.user_id END) * 100.0 / COUNT(DISTINCT f.user_id), 2) as "D7_리텐션(%)"
       FROM FirstLogin f
-      LEFT JOIN game_logs l ON f.user_id = l.user_id AND l.event_type = 'session_login'
+      LEFT JOIN game_logs l ON f.user_id = l.user_id AND l.event_type = $1
       GROUP BY f.first_date
       ORDER BY f.first_date ASC;
     `;
 
     // SQL을 DB에 그대로 쏴서 결과를 받습니다
-    const result = await this.gameLogRepo.query(query);
+    const result = await this.gameLogRepo.query(query, [
+      EventType.SESSION_LOGIN,
+    ]);
     return result;
   }
 
@@ -173,7 +176,7 @@ export class LogsService {
           payload->>'job' as job,
           SUM(CAST(payload->>'exp' AS INTEGER)) as user_total_exp
         FROM game_logs
-        WHERE event_type = 'monster_kill'
+        WHERE event_type = $1
         GROUP BY user_id, payload->>'job'
       )
       SELECT 
@@ -184,7 +187,7 @@ export class LogsService {
       GROUP BY t.job
       ORDER BY "1시간당_평균_경험치" DESC;
     `;
-    return await this.gameLogRepo.query(query);
+    return await this.gameLogRepo.query(query, [EventType.MONSTER_KILL]);
   }
 
   // ==========================================
@@ -208,7 +211,7 @@ export class LogsService {
           payload->>'item_id' as potion_type,
           COUNT(*) as user_potion_count
         FROM game_logs
-        WHERE event_type = 'item_use' AND payload->>'item_id' IN ('HP포션', 'MP포션')
+        WHERE event_type = $1 AND payload->>'item_id' IN ('HP포션', 'MP포션')
         GROUP BY user_id, payload->>'job', payload->>'item_id'
       )
       SELECT 
@@ -220,6 +223,6 @@ export class LogsService {
       GROUP BY t.job, p.potion_type
       ORDER BY t.job ASC, "1시간당_평균_포션사용량" DESC;
     `;
-    return await this.gameLogRepo.query(query);
+    return await this.gameLogRepo.query(query, [EventType.ITEM_USE]);
   }
 }
