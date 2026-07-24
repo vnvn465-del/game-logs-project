@@ -4,7 +4,7 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { GameLog } from '../game-log.entity';
 
-// 로그 적재 코드 
+// 로그 적재 코드
 @Injectable()
 export class LogsService {
   constructor(
@@ -20,7 +20,7 @@ export class LogsService {
         .insert()
         .into(GameLog)
         .values(logs)
-        .orIgnore() // <= event_id가 겹치면 에러 내지 말고 무시해라!
+        .orIgnore() // <= event_id가 겹치면 무시
         .execute();
 
       return { status: 'success', inserted_count: logs.length };
@@ -30,72 +30,93 @@ export class LogsService {
     }
   }
 
-
   //  DAU (일일 활성 유저 수) 구하기
   async getDau(startDate: string, endDate: string): Promise<any> {
     const result = await this.gameLogRepo
       .createQueryBuilder('log')
-      .select("DATE(log.occurred_at)", "date")
-      .addSelect("COUNT(DISTINCT log.user_id)", "dau")
-      .where("log.event_type = :type", { type: 'session_login' })
-      .andWhere("log.occurred_at >= :start AND log.occurred_at <= :end", { start: startDate, end: endDate })
-      .groupBy("DATE(log.occurred_at)")
-      .orderBy("date", "ASC")
+      .select('DATE(log.occurred_at)', 'date')
+      .addSelect('COUNT(DISTINCT log.user_id)', 'dau')
+      .where('log.event_type = :type', { type: 'session_login' })
+      .andWhere('log.occurred_at >= :start AND log.occurred_at <= :end', {
+        start: startDate,
+        end: endDate,
+      })
+      .groupBy('DATE(log.occurred_at)')
+      .orderBy('date', 'ASC')
       .getRawMany();
 
     return result;
   }
 
-
   // 매출 및 ARPU 구하기
   async getRevenue(startDate: string, endDate: string): Promise<any> {
     const result = await this.gameLogRepo
       .createQueryBuilder('log')
-      .select("SUM(CAST(log.payload->>'amount' AS INTEGER))", "total_revenue")
-      .addSelect("COUNT(DISTINCT log.user_id)", "paying_users")
-      .where("log.event_type = :type", { type: 'shop_purchase' })
-      .andWhere("log.occurred_at >= :start AND log.occurred_at <= :end", { start: startDate, end: endDate })
+      .select("SUM(CAST(log.payload->>'amount' AS INTEGER))", 'total_revenue')
+      .addSelect('COUNT(DISTINCT log.user_id)', 'paying_users')
+      .where('log.event_type = :type', { type: 'shop_purchase' })
+      .andWhere('log.occurred_at >= :start AND log.occurred_at <= :end', {
+        start: startDate,
+        end: endDate,
+      })
       .getRawOne();
 
-    const totalRevenue = result.total_revenue ? parseInt(result.total_revenue, 10) : 0;
-    const payingUsers = result.paying_users ? parseInt(result.paying_users, 10) : 0;
+    const totalRevenue = result.total_revenue
+      ? parseInt(result.total_revenue, 10)
+      : 0;
+    const payingUsers = result.paying_users
+      ? parseInt(result.paying_users, 10)
+      : 0;
     const arpu = payingUsers > 0 ? (totalRevenue / payingUsers).toFixed(2) : 0;
 
-    return { total_revenue: totalRevenue, paying_users: payingUsers, arpu: Number(arpu) };
+    return {
+      total_revenue: totalRevenue,
+      paying_users: payingUsers,
+      arpu: Number(arpu),
+    };
   }
-
 
   //  결제 전환율 (PU / DAU)
   async getConversionRate(startDate: string, endDate: string): Promise<any> {
     // 1) 해당 기간의 전체 고유 접속 유저 수 (DAU 개념)
     const dauResult = await this.gameLogRepo
       .createQueryBuilder('log')
-      .select("COUNT(DISTINCT log.user_id)", "total_users")
-      .where("log.event_type = :type", { type: 'session_login' })
-      .andWhere("log.occurred_at >= :start AND log.occurred_at <= :end", { start: startDate, end: endDate })
+      .select('COUNT(DISTINCT log.user_id)', 'total_users')
+      .where('log.event_type = :type', { type: 'session_login' })
+      .andWhere('log.occurred_at >= :start AND log.occurred_at <= :end', {
+        start: startDate,
+        end: endDate,
+      })
       .getRawOne();
 
     // 2) 해당 기간의 결제 유저 수 (PU)
     const puResult = await this.gameLogRepo
       .createQueryBuilder('log')
-      .select("COUNT(DISTINCT log.user_id)", "paying_users")
-      .where("log.event_type = :type", { type: 'shop_purchase' })
-      .andWhere("log.occurred_at >= :start AND log.occurred_at <= :end", { start: startDate, end: endDate })
+      .select('COUNT(DISTINCT log.user_id)', 'paying_users')
+      .where('log.event_type = :type', { type: 'shop_purchase' })
+      .andWhere('log.occurred_at >= :start AND log.occurred_at <= :end', {
+        start: startDate,
+        end: endDate,
+      })
       .getRawOne();
 
-    const totalUsers = dauResult.total_users ? parseInt(dauResult.total_users, 10) : 0;
-    const payingUsers = puResult.paying_users ? parseInt(puResult.paying_users, 10) : 0;
-    
+    const totalUsers = dauResult.total_users
+      ? parseInt(dauResult.total_users, 10)
+      : 0;
+    const payingUsers = puResult.paying_users
+      ? parseInt(puResult.paying_users, 10)
+      : 0;
+
     // 3) 비율 계산 (소수점 2자리 % 로 표시)
-    const conversionRate = totalUsers > 0 ? ((payingUsers / totalUsers) * 100).toFixed(2) : 0;
+    const conversionRate =
+      totalUsers > 0 ? ((payingUsers / totalUsers) * 100).toFixed(2) : 0;
 
     return {
       total_active_users: totalUsers,
       paying_users: payingUsers,
-      conversion_rate_percent: Number(conversionRate)
+      conversion_rate_percent: Number(conversionRate),
     };
   }
-
 
   // 리텐션 (D1, D7 재접속률)
   async getRetention(): Promise<any> {
@@ -131,7 +152,6 @@ export class LogsService {
     const result = await this.gameLogRepo.query(query);
     return result;
   }
-
 
   // ==========================================
   // 직업별 '유저 평균' 1시간당 경험치 획득량
@@ -202,8 +222,4 @@ export class LogsService {
     `;
     return await this.gameLogRepo.query(query);
   }
-
-
-
-
 }
