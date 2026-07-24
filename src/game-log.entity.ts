@@ -28,7 +28,7 @@ export class GameLog {
   @Column({ type: 'jsonb' })
   payload!: any;
 
-  @Column({ type: 'timestamp' })
+  @Column({ type: 'timestamptz' })
   occurred_at!: Date;
 
   @CreateDateColumn()

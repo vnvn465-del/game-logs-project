@@ -7,7 +7,7 @@ const AUTH_TOKEN = 'Bearer rush-secret-token';
 const INSTANCE_ID = 'pod-1';
 
 // TypeScript 인터페이스 정의
-interface GameLog {
+interface GameLogRequest {
   event_id: string;
   instance_id: string;
   event_type: EventType;
@@ -32,7 +32,7 @@ function getRandomDate(): string {
   return now.toISOString();
 }
 
-function generateRandomLog(): GameLog | null {
+function generateRandomLog(): GameLogRequest | null {
   const userId = Math.floor(Math.random() * 5) + 1001;
   const jobs = ['전사', '마법사', '도적', '궁수', '해적'];
   const fixedJob = jobs[userId % jobs.length];
@@ -67,7 +67,7 @@ function generateRandomLog(): GameLog | null {
   }
 
   // 미리 정의한 타입에 맞게 객체 생성
-  const log: GameLog = {
+  const log: GameLogRequest = {
     event_id: crypto.randomUUID(),
     instance_id: INSTANCE_ID,
     event_type: type,
@@ -131,7 +131,7 @@ function generateRandomLog(): GameLog | null {
 // 비동기 함수 타입 정의
 async function startGenerator(): Promise<void> {
   console.log('[로그 생성기 TS 버전]  (3초마다 배치 전송)');
-  let logBuffer: GameLog[] = []; // 배열 타입 지정
+  let logBuffer: GameLogRequest[] = []; // 배열 타입 지정
 
   setInterval(async () => {
     const tryCount = Math.floor(Math.random() * 20) + 10;
