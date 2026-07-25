@@ -8,6 +8,7 @@ import {
   Query,
   UseGuards,
   UseInterceptors,
+  BadRequestException,
 } from '@nestjs/common';
 import { LogsService } from './logs.service';
 import { GameLog } from '../game-log.entity';
@@ -17,6 +18,7 @@ import {
   ApiTags,
   ApiBearerAuth,
   ApiBody,
+  ApiOkResponse,
 } from '@nestjs/swagger';
 import { AuthGuard } from './auth.guard';
 import { TimeoutInterceptor } from './timeout.interceptor';
@@ -32,7 +34,7 @@ export class LogsController {
   constructor(private readonly logsService: LogsService) {}
 
   // 외부에서 전달한 로그 배열을 수신해 서비스로 넘깁니다.
-  // 빈 배열이나 잘못된 형식은 간단히 걸러낸 뒤 저장 로직을 호출합니다.
+  // 빈 배열이나 잘못된 형식은 먼저 검증한 뒤 저장 로직을 호출합니다.
   @Post()
   @HttpCode(200)
   @ApiOperation({
@@ -43,10 +45,9 @@ export class LogsController {
   @ApiBody({ type: [GameLog] })
   async receiveLogs(@Body() logs: GameLog[]) {
     if (!logs || !Array.isArray(logs) || logs.length === 0) {
-      return {
-        status: 'error',
-        message: '로그 데이터가 배열 형식이 아니거나 비어있습니다.',
-      };
+      throw new BadRequestException(
+        '로그 데이터가 배열 형식이 아니거나 비어있습니다.',
+      );
     }
 
     return await this.logsService.saveLogsBatch(logs);
@@ -73,23 +74,23 @@ export class LogsController {
     @Query('start') startDate: string,
     @Query('end') endDate: string,
   ) {
-    // 날짜 파라미터가 비어 있으면 바로 안내 메시지를 반환합니다.
+    // 날짜 범위 집계는 시작일과 종료일이 모두 있어야 하므로 필수로 검사합니다.
     if (!startDate || !endDate) {
-      return {
-        error: 'start와 end 날짜 파라미터가 필요합니다. (형식: YYYY-MM-DD)',
-      };
+      throw new BadRequestException(
+        'start와 end 날짜 파라미터가 필요합니다. (형식: YYYY-MM-DD)',
+      );
     }
 
     return await this.logsService.getDau(startDate, endDate);
   }
 
   // 기간 내 총매출, 활성유저수, 결제유저수, ARPU/ARPPU를 조회합니다.
-  // 매출은 SHOP_PURCHASE의 payload.amount 값을 기준으로 합산합니다.
+  // 매출은 SHOP_PURCHASE 이벤트의 amount 값을 기준으로 계산합니다.
   @Get('stats/revenue')
   @ApiOperation({
     summary: '매출 및 ARPU 조회 API',
     description:
-      '기간 내 총 결제 매출, 활성 유저 수, 결제 유저 수, ARPU/ARPPU를 반환합니다.',
+      '기간 내 총 결제 매출, 활성 유저 수, 결제 유저 수, ARPU, ARPPU를 반환합니다.',
   })
   @ApiQuery({
     name: 'start',
@@ -105,11 +106,11 @@ export class LogsController {
     @Query('start') startDate: string,
     @Query('end') endDate: string,
   ) {
-    // 날짜가 없으면 서비스 호출 전에 먼저 요청 형식을 확인합니다.
+    // 기간 통계는 집계 구간이 명확해야 하므로 날짜 파라미터를 필수로 받습니다.
     if (!startDate || !endDate) {
-      return {
-        error: 'start와 end 날짜 파라미터가 필요합니다. (형식: YYYY-MM-DD)',
-      };
+      throw new BadRequestException(
+        'start와 end 날짜 파라미터가 필요합니다. (형식: YYYY-MM-DD)',
+      );
     }
 
     return await this.logsService.getRevenue(startDate, endDate);
@@ -121,7 +122,7 @@ export class LogsController {
   @ApiOperation({
     summary: '결제 전환율 조회 API',
     description:
-      '활성 유저 중 실제 결제를 진행한 유저의 비율(PU/DAU)을 퍼센트(%)로 반환합니다.',
+      '활성 유저 중 실제 결제를 진행한 유저의 비율을 퍼센트(%)로 반환합니다.',
   })
   @ApiQuery({
     name: 'start',
@@ -137,26 +138,52 @@ export class LogsController {
     @Query('start') startDate: string,
     @Query('end') endDate: string,
   ) {
-    // 필수 날짜 파라미터가 빠지면 집계 의미가 없으므로 바로 반환합니다.
+    // 결제 전환율도 기간 기준 지표이므로 start, end가 모두 필요합니다.
     if (!startDate || !endDate) {
-      return {
-        error: 'start와 end 날짜 파라미터가 필요합니다. (형식: YYYY-MM-DD)',
-      };
+      throw new BadRequestException(
+        'start와 end 날짜 파라미터가 필요합니다. (형식: YYYY-MM-DD)',
+      );
     }
 
     return await this.logsService.getConversionRate(startDate, endDate);
   }
 
-  // 유저의 최초 로그인일을 코호트 기준일로 잡아 리텐션을 조회합니다.
-  // 현재 서비스 기준으로 D1, D7, D30 재방문율을 함께 반환합니다.
+  // 전체 신규 유저 기준의 D1/D7/D30 리텐션 요약 결과 1개를 조회합니다.
+  // 최근 유저로 인한 왜곡을 줄이기 위해 eligible 유저 수까지 함께 반환합니다.
   @Get('stats/retention')
   @ApiOperation({
-    summary: '리텐션(D1, D7, D30) 조회 API',
-    description:
-      '최초 접속일 기준으로 신규 유저의 1일 뒤, 7일 뒤, 30일 뒤 재접속 비율을 반환합니다.',
+    summary: '리텐션 요약 조회 API',
+    description: `전체 신규 유저 기준으로 D1, D7, D30 리텐션 요약 결과 1개를 반환합니다.
+    각 리텐션 비율은 해당 일차까지 실제로 관측 가능한 신규 유저(eligible_users)만 분모에 포함하여 계산합니다.`,
   })
   async getRetentionStats() {
     return await this.logsService.getRetention();
+  }
+
+  // 최초 로그인일(cohort_date) 기준으로 날짜별 리텐션 상세 목록을 조회합니다.
+  // startDate, endDate를 주면 원하는 코호트 기간만 필터링해서 확인할 수 있습니다.
+  @Get('stats/retention/cohorts')
+  @ApiOperation({
+    summary: '코호트별 리텐션 상세 조회 API',
+    description: `최초 접속일(cohort_date) 기준으로 날짜별 D1, D7, D30 리텐션 상세 목록을 반환합니다.
+       startDate, endDate를 사용해 조회할 코호트 기간을 제한할 수 있으며, 
+       아직 관측 기간이 충분히 지나지 않은 cohort의 D7/D30 값은 null로 반환될 수 있습니다.`,
+  })
+  @ApiQuery({
+    name: 'startDate',
+    description: '조회 시작 코호트 날짜 (예: 2026-06-20)',
+    required: false,
+  })
+  @ApiQuery({
+    name: 'endDate',
+    description: '조회 종료 코호트 날짜 (예: 2026-07-24)',
+    required: false,
+  })
+  async getRetentionCohortStats(
+    @Query('startDate') startDate?: string,
+    @Query('endDate') endDate?: string,
+  ) {
+    return await this.logsService.getRetentionCohorts(startDate, endDate);
   }
 
   // 직업별 유저의 시간당 평균 경험치 획득량을 조회합니다.

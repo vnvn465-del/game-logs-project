@@ -15,7 +15,7 @@ export class LogsService {
   ) {}
 
   // YYYY-MM-DD 형식의 날짜 문자열을 검증하고 UTC Date로 변환합니다.
-  // 잘못된 형식이면 바로 400 에러를 발생시킵니다.
+  // 잘못된 형식이거나 실제 존재하지 않는 날짜면 400 에러를 발생시킵니다.
   private parseDateOnly(value: string, fieldName: string): Date {
     if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) {
       throw new BadRequestException(
@@ -31,7 +31,29 @@ export class LogsService {
       );
     }
 
+    if (this.formatDateOnly(parsed) !== value) {
+      throw new BadRequestException(
+        `${fieldName} 날짜가 실제로 존재하지 않습니다. (예: 2026-07-25)`,
+      );
+    }
+
     return parsed;
+  }
+
+  // 선택형 startDate, endDate의 형식과 순서를 검증합니다.
+  // 코호트 상세 조회처럼 날짜 파라미터가 없어도 되는 API에서 사용합니다.
+  private validateOptionalDateRange(
+    startDate?: string,
+    endDate?: string,
+  ): void {
+    const start = startDate ? this.parseDateOnly(startDate, 'startDate') : null;
+    const end = endDate ? this.parseDateOnly(endDate, 'endDate') : null;
+
+    if (start && end && start.getTime() > end.getTime()) {
+      throw new BadRequestException(
+        'startDate는 endDate보다 늦을 수 없습니다.',
+      );
+    }
   }
 
   // Date 객체를 YYYY-MM-DD 문자열로 바꿉니다.
@@ -295,8 +317,8 @@ export class LogsService {
     };
   }
 
-  // 유저의 최초 로그인일을 코호트 기준일로 잡아 D1/D7/D30 리텐션을 계산합니다.
-  // 같은 유저가 기준일 + 1, +7, +30일에 다시 로그인했는지를 집계합니다.
+  // 전체 신규 유저 기준의 D1/D7/D30 리텐션 요약 결과 1개를 반환합니다.
+  // 최근 유저로 인해 분모가 왜곡되지 않도록 각 일차별 eligible 유저 수를 함께 계산합니다.
   async getRetention(): Promise<any> {
     const tableName = this.gameLogRepo.metadata.tableName;
 
@@ -308,68 +330,284 @@ export class LogsService {
         FROM ${tableName}
         WHERE event_type = $1
         GROUP BY user_id
+      ),
+      LoginDates AS (
+        SELECT DISTINCT
+          user_id,
+          DATE(occurred_at AT TIME ZONE 'UTC') AS login_date
+        FROM ${tableName}
+        WHERE event_type = $1
+      ),
+      LatestLoginDate AS (
+        SELECT
+          MAX(DATE(occurred_at AT TIME ZONE 'UTC')) AS latest_date
+        FROM ${tableName}
+        WHERE event_type = $1
       )
       SELECT
-        f.first_date AS cohort_date,
-        COUNT(DISTINCT f.user_id) AS new_users,
+        COUNT(*) AS total_new_users,
 
-        COUNT(DISTINCT CASE
-          WHEN DATE(l.occurred_at AT TIME ZONE 'UTC') = f.first_date + INTERVAL '1 day'
-          THEN l.user_id
-        END) AS d1_users,
-
-        COUNT(DISTINCT CASE
-          WHEN DATE(l.occurred_at AT TIME ZONE 'UTC') = f.first_date + INTERVAL '7 day'
-          THEN l.user_id
-        END) AS d7_users,
-
-        COUNT(DISTINCT CASE
-          WHEN DATE(l.occurred_at AT TIME ZONE 'UTC') = f.first_date + INTERVAL '30 day'
-          THEN l.user_id
-        END) AS d30_users,
-
+        COUNT(*) FILTER (
+          WHERE latest.latest_date IS NOT NULL
+            AND f.first_date + 1 <= latest.latest_date
+        ) AS d1_eligible_users,
+        COUNT(d1.user_id) FILTER (
+          WHERE latest.latest_date IS NOT NULL
+            AND f.first_date + 1 <= latest.latest_date
+        ) AS d1_users,
         ROUND(
           COALESCE(
-            COUNT(DISTINCT CASE
-              WHEN DATE(l.occurred_at AT TIME ZONE 'UTC') = f.first_date + INTERVAL '1 day'
-              THEN l.user_id
-            END) * 100.0 / NULLIF(COUNT(DISTINCT f.user_id), 0),
+            COUNT(d1.user_id) FILTER (
+              WHERE latest.latest_date IS NOT NULL
+                AND f.first_date + 1 <= latest.latest_date
+            ) * 100.0
+            / NULLIF(
+                COUNT(*) FILTER (
+                  WHERE latest.latest_date IS NOT NULL
+                    AND f.first_date + 1 <= latest.latest_date
+                ),
+                0
+              ),
             0
           ),
           2
         ) AS d1_retention_percent,
 
+        COUNT(*) FILTER (
+          WHERE latest.latest_date IS NOT NULL
+            AND f.first_date + 7 <= latest.latest_date
+        ) AS d7_eligible_users,
+        COUNT(d7.user_id) FILTER (
+          WHERE latest.latest_date IS NOT NULL
+            AND f.first_date + 7 <= latest.latest_date
+        ) AS d7_users,
         ROUND(
           COALESCE(
-            COUNT(DISTINCT CASE
-              WHEN DATE(l.occurred_at AT TIME ZONE 'UTC') = f.first_date + INTERVAL '7 day'
-              THEN l.user_id
-            END) * 100.0 / NULLIF(COUNT(DISTINCT f.user_id), 0),
+            COUNT(d7.user_id) FILTER (
+              WHERE latest.latest_date IS NOT NULL
+                AND f.first_date + 7 <= latest.latest_date
+            ) * 100.0
+            / NULLIF(
+                COUNT(*) FILTER (
+                  WHERE latest.latest_date IS NOT NULL
+                    AND f.first_date + 7 <= latest.latest_date
+                ),
+                0
+              ),
             0
           ),
           2
         ) AS d7_retention_percent,
 
+        COUNT(*) FILTER (
+          WHERE latest.latest_date IS NOT NULL
+            AND f.first_date + 30 <= latest.latest_date
+        ) AS d30_eligible_users,
+        COUNT(d30.user_id) FILTER (
+          WHERE latest.latest_date IS NOT NULL
+            AND f.first_date + 30 <= latest.latest_date
+        ) AS d30_users,
         ROUND(
           COALESCE(
-            COUNT(DISTINCT CASE
-              WHEN DATE(l.occurred_at AT TIME ZONE 'UTC') = f.first_date + INTERVAL '30 day'
-              THEN l.user_id
-            END) * 100.0 / NULLIF(COUNT(DISTINCT f.user_id), 0),
+            COUNT(d30.user_id) FILTER (
+              WHERE latest.latest_date IS NOT NULL
+                AND f.first_date + 30 <= latest.latest_date
+            ) * 100.0
+            / NULLIF(
+                COUNT(*) FILTER (
+                  WHERE latest.latest_date IS NOT NULL
+                    AND f.first_date + 30 <= latest.latest_date
+                ),
+                0
+              ),
             0
           ),
           2
         ) AS d30_retention_percent
 
       FROM FirstLogin f
-      LEFT JOIN ${tableName} l
-        ON f.user_id = l.user_id
-       AND l.event_type = $1
-      GROUP BY f.first_date
+      CROSS JOIN LatestLoginDate latest
+      LEFT JOIN LoginDates d1
+        ON d1.user_id = f.user_id
+       AND d1.login_date = f.first_date + 1
+      LEFT JOIN LoginDates d7
+        ON d7.user_id = f.user_id
+       AND d7.login_date = f.first_date + 7
+      LEFT JOIN LoginDates d30
+        ON d30.user_id = f.user_id
+       AND d30.login_date = f.first_date + 30;
+    `;
+
+    const row = await this.gameLogRepo.query(query, [EventType.SESSION_LOGIN]);
+
+    const result = row?.[0];
+
+    return {
+      total_new_users: this.toNumber(result?.total_new_users),
+
+      d1_eligible_users: this.toNumber(result?.d1_eligible_users),
+      d1_users: this.toNumber(result?.d1_users),
+      d1_retention_percent: this.toNumber(result?.d1_retention_percent),
+
+      d7_eligible_users: this.toNumber(result?.d7_eligible_users),
+      d7_users: this.toNumber(result?.d7_users),
+      d7_retention_percent: this.toNumber(result?.d7_retention_percent),
+
+      d30_eligible_users: this.toNumber(result?.d30_eligible_users),
+      d30_users: this.toNumber(result?.d30_users),
+      d30_retention_percent: this.toNumber(result?.d30_retention_percent),
+    };
+  }
+
+  // 최초 로그인일(cohort_date) 기준으로 날짜별 D1/D7/D30 리텐션 상세 목록을 반환합니다.
+  // startDate, endDate를 받으면 해당 코호트 날짜 범위만 필터링해서 조회합니다.
+  async getRetentionCohorts(
+    startDate?: string,
+    endDate?: string,
+  ): Promise<any> {
+    this.validateOptionalDateRange(startDate, endDate);
+
+    const tableName = this.gameLogRepo.metadata.tableName;
+    const params: any[] = [EventType.SESSION_LOGIN];
+    let cohortDateFilter = '';
+
+    if (startDate) {
+      params.push(startDate);
+      cohortDateFilter += ` AND f.first_date >= $${params.length}::date`;
+    }
+
+    if (endDate) {
+      params.push(endDate);
+      cohortDateFilter += ` AND f.first_date <= $${params.length}::date`;
+    }
+
+    const query = `
+      WITH FirstLogin AS (
+        SELECT
+          user_id,
+          DATE(MIN(occurred_at AT TIME ZONE 'UTC')) AS first_date
+        FROM ${tableName}
+        WHERE event_type = $1
+        GROUP BY user_id
+      ),
+      LoginDates AS (
+        SELECT DISTINCT
+          user_id,
+          DATE(occurred_at AT TIME ZONE 'UTC') AS login_date
+        FROM ${tableName}
+        WHERE event_type = $1
+      ),
+      LatestLoginDate AS (
+        SELECT
+          MAX(DATE(occurred_at AT TIME ZONE 'UTC')) AS latest_date
+        FROM ${tableName}
+        WHERE event_type = $1
+      )
+      SELECT
+        f.first_date AS cohort_date,
+        COUNT(*) AS new_users,
+
+        CASE
+          WHEN latest.latest_date IS NOT NULL
+            AND f.first_date + 1 <= latest.latest_date
+          THEN COUNT(d1.user_id)
+          ELSE NULL
+        END AS d1_users,
+
+        CASE
+          WHEN latest.latest_date IS NOT NULL
+            AND f.first_date + 1 <= latest.latest_date
+          THEN ROUND(
+            COALESCE(
+              COUNT(d1.user_id) * 100.0 / NULLIF(COUNT(*), 0),
+              0
+            ),
+            2
+          )
+          ELSE NULL
+        END AS d1_retention_percent,
+
+        CASE
+          WHEN latest.latest_date IS NOT NULL
+            AND f.first_date + 7 <= latest.latest_date
+          THEN COUNT(d7.user_id)
+          ELSE NULL
+        END AS d7_users,
+
+        CASE
+          WHEN latest.latest_date IS NOT NULL
+            AND f.first_date + 7 <= latest.latest_date
+          THEN ROUND(
+            COALESCE(
+              COUNT(d7.user_id) * 100.0 / NULLIF(COUNT(*), 0),
+              0
+            ),
+            2
+          )
+          ELSE NULL
+        END AS d7_retention_percent,
+
+        CASE
+          WHEN latest.latest_date IS NOT NULL
+            AND f.first_date + 30 <= latest.latest_date
+          THEN COUNT(d30.user_id)
+          ELSE NULL
+        END AS d30_users,
+
+        CASE
+          WHEN latest.latest_date IS NOT NULL
+            AND f.first_date + 30 <= latest.latest_date
+          THEN ROUND(
+            COALESCE(
+              COUNT(d30.user_id) * 100.0 / NULLIF(COUNT(*), 0),
+              0
+            ),
+            2
+          )
+          ELSE NULL
+        END AS d30_retention_percent
+
+      FROM FirstLogin f
+      CROSS JOIN LatestLoginDate latest
+      LEFT JOIN LoginDates d1
+        ON d1.user_id = f.user_id
+       AND d1.login_date = f.first_date + 1
+      LEFT JOIN LoginDates d7
+        ON d7.user_id = f.user_id
+       AND d7.login_date = f.first_date + 7
+      LEFT JOIN LoginDates d30
+        ON d30.user_id = f.user_id
+       AND d30.login_date = f.first_date + 30
+      WHERE 1 = 1
+      ${cohortDateFilter}
+      GROUP BY f.first_date, latest.latest_date
       ORDER BY f.first_date ASC;
     `;
 
-    return await this.gameLogRepo.query(query, [EventType.SESSION_LOGIN]);
+    const rows = await this.gameLogRepo.query(query, params);
+
+    return rows.map((row) => ({
+      cohort_date: row.cohort_date,
+      new_users: this.toNumber(row.new_users),
+
+      d1_users: row.d1_users === null ? null : this.toNumber(row.d1_users),
+      d1_retention_percent:
+        row.d1_retention_percent === null
+          ? null
+          : this.toNumber(row.d1_retention_percent),
+
+      d7_users: row.d7_users === null ? null : this.toNumber(row.d7_users),
+      d7_retention_percent:
+        row.d7_retention_percent === null
+          ? null
+          : this.toNumber(row.d7_retention_percent),
+
+      d30_users: row.d30_users === null ? null : this.toNumber(row.d30_users),
+      d30_retention_percent:
+        row.d30_retention_percent === null
+          ? null
+          : this.toNumber(row.d30_retention_percent),
+    }));
   }
 
   // 직업별로 유저 1명당 평균 시간당 경험치 획득량을 계산합니다.
