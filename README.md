@@ -3,7 +3,7 @@
 NestJS + PostgreSQL 기반의 게임 로그 적재 및 조회 프로젝트입니다.  
 README에는 실행 방법과 검증 흐름 위주로 정리했고, 설계 배경과 구조 판단은 별도 문서에 정리했습니다.
 
-- 설계 문서: `docs/problem1-design.md`
+- 설계 문서: [문제 1 설계 문서](./docs/problem1-design.md)
 
 ---
 
