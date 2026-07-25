@@ -312,7 +312,7 @@ CREATE TABLE game_logs (
     channel_id    VARCHAR(255) NULL,
     payload       JSONB NOT NULL,
     occurred_at   TIMESTAMPTZ NOT NULL,
-    created_at    TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    received_at    TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
 ```
@@ -376,7 +376,7 @@ CREATE TABLE game_logs (
 저장 시각만 기준으로 보면 DAU나 리텐션 계산이 왜곡될 수 있습니다.
 
 그래서 `occurred_at`을 기준으로 실제 이벤트 시간을 저장하고,  
-`created_at`은 적재 시각으로 따로 관리하도록 했습니다.
+`received_at`은 적재 시각으로 따로 관리하도록 했습니다.
 
 이 방식은 집계 정확도에 유리하지만,  
 조회 시 어떤 시간을 기준으로 볼지 명확히 구분해서 사용해야 합니다.
