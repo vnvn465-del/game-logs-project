@@ -1,4 +1,3 @@
-/* eslint-disable prettier/prettier */
 import { Entity, PrimaryColumn, Column, CreateDateColumn } from 'typeorm';
 import { EventType } from './logs/type/event-type.enum';
 
