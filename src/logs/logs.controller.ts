@@ -40,7 +40,7 @@ export class LogsController {
   @ApiOperation({
     summary: '로그 적재 API',
     description:
-      '전송 측(게임 인스턴스)에서 보낸 로그 배열(Batch)을 수신하여 DB에 중복 없이 저장합니다.',
+      '게임 서버에서 전송한 로그 배열을 수신하여 저장합니다. event_id 기준 중복 로그는 저장하지 않습니다.',
   })
   @ApiBody({ type: [GameLog] })
   async receiveLogs(@Body() logs: GameLog[]) {
@@ -58,7 +58,8 @@ export class LogsController {
   @Get('stats/dau')
   @ApiOperation({
     summary: 'DAU 조회 API',
-    description: '일자별 고유 접속 유저 수(DAU)를 반환합니다.',
+    description: `지정한 기간 동안 일자별 고유 접속 유저 수(DAU)를 반환합니다.
+                  SESSION_LOGIN 이벤트를 기준으로 집계합니다.`,
   })
   @ApiQuery({
     name: 'start',
@@ -89,8 +90,8 @@ export class LogsController {
   @Get('stats/revenue')
   @ApiOperation({
     summary: '매출 및 ARPU 조회 API',
-    description:
-      '기간 내 총 결제 매출, 활성 유저 수, 결제 유저 수, ARPU, ARPPU를 반환합니다.',
+    description: `지정한 기간의 총매출, 활성 유저 수, 결제 유저 수, ARPU, ARPPU를 반환합니다. 
+       매출은 SHOP_PURCHASE 이벤트의 payload.amount 값을 기준으로 계산합니다.`,
   })
   @ApiQuery({
     name: 'start',
@@ -116,13 +117,13 @@ export class LogsController {
     return await this.logsService.getRevenue(startDate, endDate);
   }
 
-  // 활성 유저 대비 결제 유저 비율을 계산합니다.
+  // 지정한 기간 동안 활성 유저 대비 결제 유저 비율을 계산합니다.
   // SESSION_LOGIN을 활성 기준으로, SHOP_PURCHASE를 결제 기준으로 사용합니다.
   @Get('stats/conversion')
   @ApiOperation({
     summary: '결제 전환율 조회 API',
-    description:
-      '활성 유저 중 실제 결제를 진행한 유저의 비율을 퍼센트(%)로 반환합니다.',
+    description: `지정한 기간 동안 활성 유저 중 실제 결제를 진행한 유저의 비율을 반환합니다. 
+       활성 유저는 SESSION_LOGIN, 결제 유저는 SHOP_PURCHASE 이벤트를 기준으로 집계합니다.`,
   })
   @ApiQuery({
     name: 'start',
@@ -191,8 +192,8 @@ export class LogsController {
   @Get('stats/exp-per-hour')
   @ApiOperation({
     summary: '직업별 시간당 평균 경험치 API',
-    description:
-      '각 직업별 유저들이 1시간 동안 사냥하며 획득하는 평균 경험치 효율을 계산합니다.',
+    description: `각 직업별 유저의 평균 시간당 경험치 획득량을 반환합니다. 
+       SESSION_LOGIN/SESSION_LOGOUT으로 플레이 시간을 계산하고, MONSTER_KILL의 경험치를 합산합니다.`,
   })
   async getExpPerHourStats() {
     return await this.logsService.getExpPerHourByJob();
@@ -203,8 +204,8 @@ export class LogsController {
   @Get('stats/potion-per-hour')
   @ApiOperation({
     summary: '직업별 시간당 평균 포션 사용량 API',
-    description:
-      '각 직업별 유저들이 1시간 동안 소모하는 HP/MP 포션의 평균 개수를 반환합니다.',
+    description: `각 직업별 유저의 시간당 평균 포션 사용량을 반환합니다. 
+       플레이 시간은 SESSION_LOGIN/SESSION_LOGOUT 기준으로 계산하며, ITEM_USE 이벤트를 집계합니다.`,
   })
   async getPotionPerHourStats() {
     return await this.logsService.getPotionPerHourByJob();
